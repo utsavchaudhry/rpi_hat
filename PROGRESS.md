@@ -26,29 +26,38 @@ audio relay) in dedicated hardware.
 - Target/downstream device: NVIDIA Jetson Thor, connected to the Pi via
   Eth(`eth0`), will run ROS 2.
 
-## Networking (done)
+## Networking (done, verified end-to-end)
 
 - Pi's network stack is netplan-managed with `renderer: NetworkManager`
   (this is Ubuntu, not stock Raspberry Pi OS — connections show up as
   `netplan-eth0` etc. in `nmcli`).
 - `eth0` is configured for NAT/DHCP sharing to the Thor via netplan's
-  NetworkManager passthrough:
+  NetworkManager passthrough, added to the netplan-generated file at
+  `/etc/netplan/90-NM-<uuid-of-netplan-eth0>.yaml`:
   ```yaml
-  network:
-    version: 2
-    renderer: NetworkManager
-    ethernets:
-      eth0:
-        networkmanager:
-          passthrough:
-            ipv4.method: shared
+  networkmanager:
+    passthrough:
+      ipv4.method: "shared"
   ```
-  This was used instead of a raw `nmcli connection modify` because
-  netplan regenerates the NM keyfile from YAML and would silently wipe a
-  manual nmcli change on next `netplan apply`/reboot.
-- Result: Pi is `10.42.0.1` on `eth0`, hands out DHCP leases in
-  `10.42.0.0/24` to whatever's plugged into `eth0` (currently just Thor
-  once connected).
+  This has to go through netplan (not a raw `nmcli connection modify`)
+  because netplan regenerates the NM keyfile from this YAML and would
+  silently wipe a manual nmcli change on the next `netplan apply`/reboot.
+- Gotcha hit along the way: after editing, `eth0` kept failing to
+  activate with "IP configuration could not be reserved" — NetworkManager
+  logs showed it was still running a **DHCP client** transaction on
+  `eth0` (`dhcp4 (eth0): activation: beginning transaction`), meaning the
+  `shared` passthrough hadn't actually been applied yet (it had only been
+  discussed, not written to the file). Once actually written, this
+  resolved immediately.
+- Automated in [`scripts/pi-setup-router.sh`](scripts/pi-setup-router.sh)
+  — idempotent, re-discovers the netplan-eth0 UUID/file each run so it
+  survives a Pi reflash (UUID changes) without hardcoding anything.
+- **Verified working (2026-08-03):** Pi is `10.42.0.1` on `eth0`. Thor's
+  `enP2p1s0` picked up `10.42.0.249/24` via DHCP. From Thor:
+  `ping 10.42.0.1` → 0% loss, ~0.4ms. `ping 8.8.8.8` → 0% loss, ~130ms
+  (through the Pi's NAT out over its WiFi upstream). Verification script:
+  [`scripts/thor-verify-router.sh`](scripts/thor-verify-router.sh) (run
+  on Thor).
 
 ## Audio streaming plan
 
